@@ -2,83 +2,61 @@ const axios = require("axios");
 const fs = require("fs-extra");
 const path = require("path");
 
-const apiUrl = "https://raw.githubusercontent.com/Saim-x69x/sakura/main/ApiUrl.json";
-
-async function getApiUrl() {
-  const res = await axios.get(apiUrl);
-  return res.data.apiv3;
-}
-
-async function urlToBase64(url) {
-  const res = await axios.get(url, { responseType: "arraybuffer" });
-  return Buffer.from(res.data).toString("base64");
-}
-
 module.exports = {
   config: {
     name: "edit",
+    aliases: ["fedit", "deepfake"],
     version: "1.0",
-    author: "Saimx69x (Api by Kay)",
-    countDown: 5,
+    author: "Christus 🐊",
+    countDown: 10,
     role: 0,
-    shortDescription: "Edit an image using text prompt",
-    longDescription: "Only edits an existing image. Must reply to an image.",
-    category: "ai",
-    guide: "{p}edit <prompt> (reply to an image)"
+    shortDescription: { en: "Edit images using AI" },
+    longDescription: { en: "Edit an image by replying to it with a prompt." },
+    category: "image",
+    guide: { en: "{pn} <prompt> (reply to an image)" }
   },
 
-  onStart: async function ({ api, event, args, message }) {
-    const repliedImage = event.messageReply?.attachments?.[0];
-    const prompt = args.join(" ").trim();
+  onStart: async function ({ message, args, event, api }) {
+    const { type, messageReply } = event;
+    const prompt = args.join(" ");
 
-    if (!repliedImage || repliedImage.type !== "photo") {
-      return message.reply(
-        "❌ Please reply to an image to edit it.\n\nExample:\n/edit make it anime style"
-      );
+    if (type !== "message_reply" || !messageReply.attachments || messageReply.attachments[0].type !== "photo") {
+      return message.reply("Please reply to an image to edit it.");
     }
 
     if (!prompt) {
-      return message.reply("❌ Please provide an edit prompt.");
+      return message.reply("Please provide a prompt to tell the AI how to edit the image.");
     }
 
-    const processingMsg = await message.reply("🖌️ Editing image...");
+    const imageUrl = messageReply.attachments[0].url;
+    const cacheDir = path.join(__dirname, "cache");
+    await fs.ensureDir(cacheDir);
+    const imgPath = path.join(cacheDir, `edit_${Date.now()}.png`);
 
-    const imgPath = path.join(
-      __dirname,
-      "cache",
-      `${Date.now()}_edit.jpg`
-    );
+    api.setMessageReaction("⏳", event.messageID);
 
     try {
-      const API_URL = await getApiUrl();
+      const apiUrl = `https://smfahim.xyz/ai/deepfake/gen?prompt=${encodeURIComponent(prompt)}&imageUrl=${encodeURIComponent(imageUrl)}`;
+      const response = await axios.get(apiUrl);
+      const { success, generate_url } = response.data;
 
-      const payload = {
-        prompt: `Edit the given image based on this description:\n${prompt}`,
-        images: [await urlToBase64(repliedImage.url)],
-        format: "jpg"
-      };
+      if (!success || !generate_url) {
+        throw new Error("AI editing failed.");
+      }
 
-      const res = await axios.post(API_URL, payload, {
-        responseType: "arraybuffer",
-        timeout: 180000
-      });
+      const imgRes = await axios.get(generate_url, { responseType: "arraybuffer" });
+      await fs.writeFile(imgPath, Buffer.from(imgRes.data));
 
-      await fs.ensureDir(path.dirname(imgPath));
-      await fs.writeFile(imgPath, Buffer.from(res.data));
-
-      await api.unsendMessage(processingMsg.messageID);
-
-      await message.reply({
-        body: `✅ Image edited successfully\nPrompt: ${prompt}`,
-        attachment: fs.createReadStream(imgPath)
-      });
+      await message.reply({ attachment: fs.createReadStream(imgPath) });
+      
+      api.setMessageReaction("✅", event.messageID);
 
     } catch (error) {
-      console.error("EDIT Error:", error?.response?.data || error.message);
-      await api.unsendMessage(processingMsg.messageID);
-      message.reply("❌ Failed to edit image. Try again later.");
+      console.error(error);
+      api.setMessageReaction("❌", event.messageID);
+      message.reply(`❌ Error: ${error.message}`);
     } finally {
-      if (fs.existsSync(imgPath)) {
+      if (await fs.pathExists(imgPath)) {
         await fs.remove(imgPath);
       }
     }
